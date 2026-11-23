@@ -148,7 +148,7 @@ index 4bfbe6fb6..a1b26d4e0 100644
  
      private static boolean preferOkHttp() {
 diff --git a/common/src/ststable/res/values/update_urls.xml b/common/src/ststable/res/values/update_urls.xml
-index 80bf351f3..f9921846f 100644
+index 80bf351f3..c784e04c2 100644
 --- a/common/src/ststable/res/values/update_urls.xml
 +++ b/common/src/ststable/res/values/update_urls.xml
 @@ -1,6 +1,6 @@
@@ -156,7 +156,7 @@ index 80bf351f3..f9921846f 100644
  <resources>
      <string-array name="update_urls">
 -        <item>https://github.com/yuliskov/SmartTubeNext/releases/download/latest/smarttube_stable2.json</item>
-+        <item>https://raw.githubusercontent.com/doroved/smarttube-custom-sni-patches/main/stable.json</item>
++        <item>https://raw.githubusercontent.com/doroved/smarttube-patches/main/stable.json</item>
      </string-array>
  </resources>
 \ No newline at end of file
