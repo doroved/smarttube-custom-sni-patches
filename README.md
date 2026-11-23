@@ -1,4 +1,4 @@
-# SmartTube Custom SNI Patches (`doroved-patch`)
+# SmartTube Patches (`doroved-patch`)
 
 Набор патчей и автоматизированная сборка **SmartTube** с подменой TLS SNI на `www.google.com` для доменов YouTube, коротким таймаутом TLS для `*.googlevideo.com` и оптимизацией переключения клиентов/движка.
 
