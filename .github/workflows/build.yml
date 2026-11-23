@@ -1,0 +1,237 @@
+name: Build Patched SmartTube Release
+
+on:
+  schedule:
+    # Check for new SmartTube releases every 6 hours
+    - cron: '0 */6 * * *'
+  push:
+    paths:
+      - 'PATCH_VERSION'
+      - '*.patch'
+      - 'apply_custom_sni.sh'
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: 'Specific SmartTube tag (e.g. 32.80). Leave empty for latest stable.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: smarttube-release-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout patch repository
+        uses: actions/checkout@v4
+
+      - name: Resolve target upstream tag and patch version
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.upstream_tag }}
+          UPSTREAM_MANIFEST_URL: https://github.com/yuliskov/SmartTubeNext/releases/download/latest/smarttube_stable2.json
+        run: |
+          PATCH_VER="$(tr -d '[:space:]' < PATCH_VERSION)"
+          echo "patch_version=$PATCH_VER" >> "$GITHUB_OUTPUT"
+
+          # Fetch official SmartTube stable manifest (used for latest tag + localized changelogs)
+          curl -fsSL "$UPSTREAM_MANIFEST_URL" -o upstream_stable.json || echo '{}' > upstream_stable.json
+
+          if [ -n "$INPUT_TAG" ]; then
+            UPSTREAM_TAG="$INPUT_TAG"
+          else
+            # Pick the entry with the highest versionCode from upstream smarttube_stable2.json
+            UPSTREAM_TAG="$(python3 - <<'PYEOF'
+          import json
+          with open("upstream_stable.json", encoding="utf-8") as f:
+              data = json.load(f)
+          versions = [(v.get("versionCode", 0), k) for k, v in data.items() if k != "package" and isinstance(v, dict)]
+          print(max(versions)[1] if versions else "")
+          PYEOF
+            )"
+            if [ -z "$UPSTREAM_TAG" ]; then
+              UPSTREAM_TAG="$(curl -fsSL https://api.github.com/repos/yuliskov/SmartTube/releases/latest | jq -r '.tag_name')"
+            fi
+          fi
+
+          if [ -z "$UPSTREAM_TAG" ] || [ "$UPSTREAM_TAG" = "null" ]; then
+            echo "Error: failed to resolve upstream tag" >&2
+            exit 1
+          fi
+
+          RELEASE_TAG="${UPSTREAM_TAG}-doroved-patch-v${PATCH_VER}"
+          echo "upstream_tag=$UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists. Skipping build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Will build release: $RELEASE_TAG"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17
+        if: steps.meta.outputs.should_build == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Clone SmartTube at target tag
+        if: steps.meta.outputs.should_build == 'true'
+        run: |
+          git clone --depth 1 --branch "${{ steps.meta.outputs.upstream_tag }}" \
+            --recurse-submodules --shallow-submodules \
+            https://github.com/yuliskov/SmartTube.git SmartTube
+
+      - name: Apply doroved-patch patches
+        if: steps.meta.outputs.should_build == 'true'
+        run: |
+          chmod +x ./apply_custom_sni.sh
+          ./apply_custom_sni.sh ./SmartTube
+
+      - name: Decode signing keystore
+        if: steps.meta.outputs.should_build == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
+          cat <<EOF > "$GITHUB_WORKSPACE/SmartTube/keystore.properties"
+          storeFile=$GITHUB_WORKSPACE/release.keystore
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Run CustomSniTest and build signed release APKs
+        if: steps.meta.outputs.should_build == 'true'
+        working-directory: SmartTube
+        run: |
+          chmod +x ./gradlew
+          ./gradlew \
+            -PpatchVersion="${{ steps.meta.outputs.patch_version }}" \
+            :sharedutils:testDebugUnitTest --tests com.liskovsoft.sharedutils.okhttp.CustomSniTest \
+            :smarttubetv:assembleStstableRelease
+
+      - name: Prepare renamed APKs and read versionCode
+        if: steps.meta.outputs.should_build == 'true'
+        id: apks
+        run: |
+          PATCH_VER="${{ steps.meta.outputs.patch_version }}"
+          SRC_DIR="SmartTube/smarttubetv/build/outputs/apk/ststable/release"
+          OUT_DIR="dist"
+          mkdir -p "$OUT_DIR"
+
+          VERSION_CODE="$(jq -r '.elements[0].versionCode' "$SRC_DIR/output-metadata.json")"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+
+          for apk in "$SRC_DIR"/*.apk; do
+            base="$(basename "$apk")"
+            new_name="${base%_*}_doroved-patch-v${PATCH_VER}_${base##*_}"
+            cp "$apk" "$OUT_DIR/$new_name"
+          done
+
+          ls -lh "$OUT_DIR"
+
+      - name: Publish GitHub Release
+        if: steps.meta.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          UPSTREAM_TAG="${{ steps.meta.outputs.upstream_tag }}"
+          PATCH_VER="${{ steps.meta.outputs.patch_version }}"
+          RELEASE_TAG="${{ steps.meta.outputs.release_tag }}"
+          VERSION_CODE="${{ steps.apks.outputs.version_code }}"
+
+          gh release create "$RELEASE_TAG" dist/*.apk \
+            --title "SmartTube ${UPSTREAM_TAG} (by doroved-patch v${PATCH_VER})" \
+            --notes "Automated build of SmartTube ${UPSTREAM_TAG} with doroved-patch v${PATCH_VER} (versionCode: ${VERSION_CODE})."
+
+      - name: Update stable.json manifest for in-app auto-updater
+        if: steps.meta.outputs.should_build == 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.meta.outputs.upstream_tag }}
+          PATCH_VER: ${{ steps.meta.outputs.patch_version }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          VERSION_CODE: ${{ steps.apks.outputs.version_code }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, pathlib
+
+          upstream = os.environ["UPSTREAM_TAG"]
+          patch_ver = os.environ["PATCH_VER"]
+          release_tag = os.environ["RELEASE_TAG"]
+          version_code = int(os.environ["VERSION_CODE"])
+          repo = os.environ["REPO"]
+
+          base_url = f"https://github.com/{repo}/releases/download/{release_tag}"
+          manifest_path = pathlib.Path("stable.json")
+
+          data = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+
+          existing_codes = [v.get("versionCode", 0) for k, v in data.items() if k != "package" and isinstance(v, dict)]
+          max_existing_code = max(existing_codes) if existing_codes else 0
+
+          if version_code >= max_existing_code:
+              data["package"] = {
+                  "downloadUrlList_armeabi-v7a": [
+                      f"{base_url}/SmartTube_stable_{upstream}_doroved-patch-v{patch_ver}_armeabi-v7a.apk"
+                  ],
+                  "downloadUrlList_arm64-v8a": [
+                      f"{base_url}/SmartTube_stable_{upstream}_doroved-patch-v{patch_ver}_arm64-v8a.apk"
+                  ],
+                  "downloadUrlList_x86": [
+                      f"{base_url}/SmartTube_stable_{upstream}_doroved-patch-v{patch_ver}_x86.apk"
+                  ],
+                  "downloadUrlList": [
+                      f"{base_url}/SmartTube_stable_{upstream}_doroved-patch-v{patch_ver}_universal.apk"
+                  ],
+                  "downloadUrl": f"{base_url}/SmartTube_stable_{upstream}_doroved-patch-v{patch_ver}_universal.apk",
+              }
+
+          version_key = f"{upstream} (by doroved-patch v{patch_ver})"
+
+          # Pull localized changelogs (changelog, changelog_ru, changelog_uk, etc.) from upstream smarttube_stable2.json
+          upstream_path = pathlib.Path("upstream_stable.json")
+          upstream_entry = {}
+          if upstream_path.exists():
+              upstream_data = json.loads(upstream_path.read_text(encoding="utf-8"))
+              upstream_entry = upstream_data.get(upstream, {}) if isinstance(upstream_data, dict) else {}
+
+          entry = {"versionCode": version_code}
+
+          en_list = list(upstream_entry.get("changelog", []))
+          entry["changelog"] = [f"[doroved-patch v{patch_ver}] Custom SNI + 3s googlevideo TLS timeout"] + en_list
+
+          ru_list = list(upstream_entry.get("changelog_ru", []))
+          entry["changelog_ru"] = [f"[doroved-patch v{patch_ver}] Кастомный SNI + таймаут 3 сек на googlevideo"] + ru_list
+
+          for k, v in upstream_entry.items():
+              if k.startswith("changelog_") and k != "changelog_ru" and isinstance(v, list):
+                  entry[k] = [f"[doroved-patch v{patch_ver}] Custom SNI + 3s googlevideo TLS timeout"] + list(v)
+
+          data[version_key] = entry
+
+          manifest_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PYEOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add stable.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update stable.json for ${RELEASE_TAG}"
+            git push
+          fi

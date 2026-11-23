@@ -1,0 +1,197 @@
+diff --git a/common/build.gradle b/common/build.gradle
+index 35466e810..41ac835cd 100644
+--- a/common/build.gradle
++++ b/common/build.gradle
+@@ -25,6 +25,9 @@ android {
+         // More info: http://myhexaville.com/2017/03/10/android-multidex/
+         // Additionally, you should extend your application from MultiDexApplication
+         multiDexEnabled = true
++
++        def dorovedPatchVersion = (project.findProperty('patchVersion') ?: '1').toString().trim()
++        buildConfigField "String", "PATCH_VERSION", "\"v${dorovedPatchVersion}\""
+     }
+ 
+     buildTypes {
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/ErrorFixerController.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/ErrorFixerController.java
+index c61dea07e..365bd74eb 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/ErrorFixerController.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/models/playback/controllers/ErrorFixerController.java
+@@ -8,6 +8,7 @@ import com.google.android.exoplayer2.source.sabr.parser.exceptions.SabrReloadPla
+ import com.liskovsoft.sharedutils.helpers.Helpers;
+ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
+ import com.liskovsoft.sharedutils.mylogger.Log;
++import com.liskovsoft.sharedutils.okhttp.CustomSniConfig;
+ import com.liskovsoft.smartyoutubetv2.common.R;
+ import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
+ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.BasePlayerController;
+@@ -235,6 +236,9 @@ public class ErrorFixerController extends BasePlayerController implements OnLong
+         if (Helpers.startsWithAny(errorContent, "Unable to connect to")) {
+             // No internet connection or WRONG DATE on the device
+             // Recently this message starting to show for other unknown reasons
++            if (CustomSniConfig.isEnabled()) {
++                YouTubeServiceManager.instance().invalidateFormatCache();
++            }
+             if (!getPlayerTweaksData().isNetworkErrorFixingDisabled()) {
+                 switchNextEngine();
+             }
+@@ -444,6 +448,9 @@ public class ErrorFixerController extends BasePlayerController implements OnLong
+     }
+ 
+     private int getNextEngine() {
++        if (CustomSniConfig.isEnabled()) {
++            return PlayerTweaksData.PLAYER_DATA_SOURCE_OKHTTP;
++        }
+         int currentEngine = getPlayerTweaksData().getPlayerDataSource();
+         Integer[] engineList = Utils.skipCronet() ?
+                 new Integer[] { PlayerTweaksData.PLAYER_DATA_SOURCE_DEFAULT, PlayerTweaksData.PLAYER_DATA_SOURCE_OKHTTP } :
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/settings/AboutSettingsPresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/settings/AboutSettingsPresenter.java
+index 0d9162bf9..df81fcd51 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/settings/AboutSettingsPresenter.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/settings/AboutSettingsPresenter.java
+@@ -6,6 +6,7 @@ import com.liskovsoft.sharedutils.helpers.AppInfoHelpers;
+ import com.liskovsoft.sharedutils.helpers.Helpers;
+ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
+ import com.liskovsoft.sharedutils.locale.LocaleUtility;
++import com.liskovsoft.smartyoutubetv2.common.BuildConfig;
+ import com.liskovsoft.smartyoutubetv2.common.R;
+ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
+ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
+@@ -36,9 +37,10 @@ public class AboutSettingsPresenter extends BasePresenter<Void> {
+     }
+ 
+     public void show() {
+-        String mainTitle = String.format("%s %s",
++        String mainTitle = String.format("%s %s (by doroved-patch %s)",
+                 getContext().getString(R.string.app_name),
+-                AppInfoHelpers.getAppVersionName(getContext()));
++                AppInfoHelpers.getAppVersionName(getContext()),
++                BuildConfig.PATCH_VERSION);
+ 
+         AppDialogPresenter settingsPresenter = AppDialogPresenter.instance(getContext());
+ 
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/settings/AboutSimpleSettingsPresenter.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/settings/AboutSimpleSettingsPresenter.java
+index 568997149..c27b1383d 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/settings/AboutSimpleSettingsPresenter.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/app/presenters/settings/AboutSimpleSettingsPresenter.java
+@@ -4,6 +4,7 @@ import android.content.Context;
+ import com.liskovsoft.appupdatechecker2.AppUpdateChecker;
+ import com.liskovsoft.sharedutils.helpers.AppInfoHelpers;
+ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
++import com.liskovsoft.smartyoutubetv2.common.BuildConfig;
+ import com.liskovsoft.smartyoutubetv2.common.R;
+ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.OptionItem;
+ import com.liskovsoft.smartyoutubetv2.common.app.models.playback.ui.UiOptionItem;
+@@ -27,9 +28,10 @@ public class AboutSimpleSettingsPresenter extends BasePresenter<Void> {
+     }
+ 
+     public void show() {
+-        String mainTitle = String.format("%s %s",
++        String mainTitle = String.format("%s %s (by doroved-patch %s)",
+                 getContext().getString(R.string.app_name) + " MOD",
+-                AppInfoHelpers.getAppVersionName(getContext()));
++                AppInfoHelpers.getAppVersionName(getContext()),
++                BuildConfig.PATCH_VERSION);
+ 
+         AppDialogPresenter settingsPresenter = AppDialogPresenter.instance(getContext());
+ 
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/exoplayer/ExoMediaSourceFactory.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/exoplayer/ExoMediaSourceFactory.java
+index 1d36e2509..621739b8b 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/exoplayer/ExoMediaSourceFactory.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/exoplayer/ExoMediaSourceFactory.java
+@@ -39,6 +39,7 @@ import com.liskovsoft.mediaserviceinterfaces.data.MediaItemFormatInfo;
+ import com.liskovsoft.sharedutils.cronet.CronetManager;
+ import com.liskovsoft.sharedutils.helpers.FileHelpers;
+ import com.liskovsoft.sharedutils.mylogger.Log;
++import com.liskovsoft.sharedutils.okhttp.CustomSniConfig;
+ import com.liskovsoft.sharedutils.okhttp.OkHttpManager;
+ import com.liskovsoft.smartyoutubetv2.common.exoplayer.errors.DashDefaultLoadErrorHandlingPolicy;
+ import com.liskovsoft.smartyoutubetv2.common.exoplayer.errors.SabrDefaultLoadErrorHandlingPolicy;
+@@ -134,6 +135,9 @@ public class ExoMediaSourceFactory {
+     private HttpDataSource.Factory buildHttpDataSourceFactory(boolean useBandwidthMeter, int readTimeoutMs) {
+         PlayerTweaksData tweaksData = PlayerTweaksData.instance(mContext);
+         int source = tweaksData.getPlayerDataSource();
++        if (CustomSniConfig.isEnabled() && source == PlayerTweaksData.PLAYER_DATA_SOURCE_CRONET) {
++            source = PlayerTweaksData.PLAYER_DATA_SOURCE_OKHTTP;
++        }
+         DefaultBandwidthMeter bandwidthMeter = useBandwidthMeter ? BANDWIDTH_METER : null;
+         return source == PlayerTweaksData.PLAYER_DATA_SOURCE_OKHTTP ? buildOkHttpDataSourceFactory(bandwidthMeter, readTimeoutMs) :
+                         source == PlayerTweaksData.PLAYER_DATA_SOURCE_CRONET && CronetManager.getEngine(mContext) != null ? buildCronetDataSourceFactory(bandwidthMeter, readTimeoutMs) :
+diff --git a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/utils/Utils.java b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/utils/Utils.java
+index 4bfbe6fb6..a1b26d4e0 100644
+--- a/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/utils/Utils.java
++++ b/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/utils/Utils.java
+@@ -66,6 +66,7 @@ import com.liskovsoft.sharedutils.helpers.Helpers;
+ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
+ import com.liskovsoft.sharedutils.misc.WeakHashSet;
+ import com.liskovsoft.sharedutils.mylogger.Log;
++import com.liskovsoft.sharedutils.okhttp.CustomSniConfig;
+ import com.liskovsoft.sharedutils.okhttp.OkHttpManager;
+ import com.liskovsoft.smartyoutubetv2.common.BuildConfig;
+ import com.liskovsoft.smartyoutubetv2.common.R;
+@@ -1152,6 +1153,9 @@ public class Utils {
+     }
+ 
+     public static int getFasterDataSource() {
++        if (CustomSniConfig.isEnabled()) {
++            return PlayerTweaksData.PLAYER_DATA_SOURCE_OKHTTP;
++        }
+         return skipCronet() ? PlayerTweaksData.PLAYER_DATA_SOURCE_DEFAULT : preferOkHttp()
+                 ? PlayerTweaksData.PLAYER_DATA_SOURCE_OKHTTP : PlayerTweaksData.PLAYER_DATA_SOURCE_CRONET;
+     }
+@@ -1159,7 +1163,7 @@ public class Utils {
+     public static boolean skipCronet() {
+         // Android 6 and below may crash running Cronet???
+         //return VERSION.SDK_INT <= 23 || Helpers.equals(BuildConfig.FLAVOR, "strtarmenia");
+-        return Helpers.equals(BuildConfig.FLAVOR, "strtarmenia");
++        return CustomSniConfig.isEnabled() || Helpers.equals(BuildConfig.FLAVOR, "strtarmenia");
+     }
+ 
+     private static boolean preferOkHttp() {
+diff --git a/common/src/ststable/res/values/update_urls.xml b/common/src/ststable/res/values/update_urls.xml
+index 80bf351f3..f9921846f 100644
+--- a/common/src/ststable/res/values/update_urls.xml
++++ b/common/src/ststable/res/values/update_urls.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+     <string-array name="update_urls">
+-        <item>https://github.com/yuliskov/SmartTubeNext/releases/download/latest/smarttube_stable2.json</item>
++        <item>https://raw.githubusercontent.com/doroved/smarttube-custom-sni-patches/main/stable.json</item>
+     </string-array>
+ </resources>
+\ No newline at end of file
+diff --git a/smarttubetv/build.gradle b/smarttubetv/build.gradle
+index 36fadb4e7..e43d5058e 100644
+--- a/smarttubetv/build.gradle
++++ b/smarttubetv/build.gradle
+@@ -178,6 +178,9 @@ android {
+             }
+         }
+     }
++
++    def dorovedPatchVersion = (project.findProperty('patchVersion') ?: '1').toString().trim().toInteger()
++    defaultConfig.versionCode = defaultConfig.versionCode * 1000 + dorovedPatchVersion
+ }
+ 
+ dependencies {
+diff --git a/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/main/MainApplication.java b/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/main/MainApplication.java
+index 8310e90b7..feab8f3df 100644
+--- a/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/main/MainApplication.java
++++ b/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/main/MainApplication.java
+@@ -8,6 +8,7 @@ import androidx.work.Configuration;
+ 
+ import com.liskovsoft.sharedutils.helpers.Helpers;
+ import com.liskovsoft.sharedutils.helpers.MessageHelpers;
++import com.liskovsoft.sharedutils.okhttp.CustomSniHelper;
+ import com.liskovsoft.smartyoutubetv2.common.app.models.data.BrowseSection;
+ import com.liskovsoft.smartyoutubetv2.common.app.presenters.BrowsePresenter;
+ import com.liskovsoft.smartyoutubetv2.common.app.views.AddDeviceView;
+@@ -83,6 +84,8 @@ public class MainApplication extends MultiDexApplication implements Configuratio
+             }
+         }
+ 
++        CustomSniHelper.installDefaultHttps();
++
+         setupGlobalExceptionHandler();
+         setupViewManager();
+     }

@@ -1,0 +1,18 @@
+# Signing keys and credentials (NEVER commit!)
+*.keystore
+*.jks
+keystore.properties
+
+# Local build outputs and cloned repos
+apks/
+dist/
+SmartTube/
+
+# Local-only notes with machine-specific paths
+README-local.md
+AUTO_UPDATE_GUIDE.md
+
+# OS / editor junk
+.DS_Store
+*.swp
+*.log

@@ -1,0 +1,1109 @@
+diff --git a/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniConfig.java b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniConfig.java
+new file mode 100644
+index 0000000..eb8f9ae
+--- /dev/null
++++ b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniConfig.java
+@@ -0,0 +1,159 @@
++package com.liskovsoft.sharedutils.okhttp;
++
++import androidx.annotation.NonNull;
++import androidx.annotation.Nullable;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.regex.Pattern;
++
++/**
++ * Host-to-SNI mapping configuration for establishing TLS connections with a custom SNI.
++ */
++public final class CustomSniConfig {
++    public static final String DEFAULT_CUSTOM_SNI = "www.google.com";
++    public static final int GOOGLEVIDEO_TLS_TIMEOUT_MS = 3_000;
++
++    private static final class WildcardRule {
++        final Pattern pattern;
++        final String sni;
++
++        WildcardRule(Pattern pattern, String sni) {
++            this.pattern = pattern;
++            this.sni = sni;
++        }
++    }
++
++    private static volatile boolean sEnabled = true;
++
++    private static final Map<String, String> EXACT_HOST_MAP;
++    private static final List<WildcardRule> WILDCARD_RULES;
++
++    static {
++        Map<String, String> exact = new HashMap<>();
++        List<WildcardRule> wildcards = new ArrayList<>();
++
++        // Youtube custom SNI host rules
++        addRule(exact, wildcards, "youtu.be", DEFAULT_CUSTOM_SNI);
++        addRule(exact, wildcards, "*.googlevideo.com", DEFAULT_CUSTOM_SNI);
++        addRule(exact, wildcards, "*.youtube.com", DEFAULT_CUSTOM_SNI);
++        addRule(exact, wildcards, "youtube.com", DEFAULT_CUSTOM_SNI);
++        addRule(exact, wildcards, "*.ytimg.com", DEFAULT_CUSTOM_SNI);
++        addRule(exact, wildcards, "*.ggpht.com", DEFAULT_CUSTOM_SNI);
++        addRule(exact, wildcards, "yt3.googleusercontent.com", DEFAULT_CUSTOM_SNI);
++        addRule(exact, wildcards, "lh*.googleusercontent.com", DEFAULT_CUSTOM_SNI);
++        addRule(exact, wildcards, "youtubei.googleapis.com", DEFAULT_CUSTOM_SNI);
++
++        EXACT_HOST_MAP = Collections.unmodifiableMap(exact);
++        WILDCARD_RULES = Collections.unmodifiableList(wildcards);
++    }
++
++    private CustomSniConfig() {
++    }
++
++    private static void addRule(Map<String, String> exact, List<WildcardRule> wildcards, String hostPattern, String sni) {
++        String normalized = normalizeHost(hostPattern);
++        if (normalized == null || normalized.isEmpty()) {
++            return;
++        }
++
++        if (normalized.contains("*")) {
++            wildcards.add(new WildcardRule(compileGlobPattern(normalized), sni));
++        } else {
++            exact.put(normalized, sni);
++        }
++    }
++
++    private static Pattern compileGlobPattern(@NonNull String glob) {
++        StringBuilder regex = new StringBuilder("^");
++        for (int i = 0; i < glob.length(); i++) {
++            char c = glob.charAt(i);
++            if (c == '*') {
++                // Leading "*." requires at least one character for the subdomain label
++                if (i == 0 && glob.length() > 1 && glob.charAt(1) == '.') {
++                    regex.append(".+");
++                } else {
++                    regex.append(".*");
++                }
++            } else if ("\\.[]{}()+-?^$|".indexOf(c) >= 0) {
++                regex.append('\\').append(c);
++            } else {
++                regex.append(c);
++            }
++        }
++        regex.append('$');
++        return Pattern.compile(regex.toString());
++    }
++
++    @Nullable
++    private static String normalizeHost(@Nullable String host) {
++        if (host == null) {
++            return null;
++        }
++        String normalized = host.trim().toLowerCase(Locale.US);
++        while (normalized.endsWith(".")) {
++            normalized = normalized.substring(0, normalized.length() - 1);
++        }
++        return normalized;
++    }
++
++    public static boolean isEnabled() {
++        return sEnabled;
++    }
++
++    public static void setEnabled(boolean enabled) {
++        sEnabled = enabled;
++    }
++
++    /**
++     * Returns the custom SNI hostname to send in TLS ClientHello for the given target host,
++     * or {@code null} if the host should use its default SNI.
++     */
++    @Nullable
++    public static String getCustomSni(@Nullable String host) {
++        if (!sEnabled) {
++            return null;
++        }
++
++        String normalized = normalizeHost(host);
++        if (normalized == null || normalized.isEmpty()) {
++            return null;
++        }
++
++        String exactMatch = EXACT_HOST_MAP.get(normalized);
++        if (exactMatch != null) {
++            return exactMatch;
++        }
++
++        for (WildcardRule rule : WILDCARD_RULES) {
++            if (rule.pattern.matcher(normalized).matches()) {
++                return rule.sni;
++            }
++        }
++
++        return null;
++    }
++
++    /**
++     * Returns a custom TLS handshake / connect timeout in milliseconds for the given host,
++     * or {@code 0} to keep the default timeout.
++     * For {@code *.googlevideo.com}, drops stalled TLS connections after 3 seconds so the
++     * player can quickly fail over to another media CDN host.
++     */
++    public static int getTlsHandshakeTimeoutMs(@Nullable String host) {
++        if (!sEnabled) {
++            return 0;
++        }
++
++        String normalized = normalizeHost(host);
++        if (normalized != null && normalized.endsWith(".googlevideo.com") && normalized.length() > ".googlevideo.com".length()) {
++            return GOOGLEVIDEO_TLS_TIMEOUT_MS;
++        }
++
++        return 0;
++    }
++}
+diff --git a/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniHelper.java b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniHelper.java
+new file mode 100644
+index 0000000..e4504f4
+--- /dev/null
++++ b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniHelper.java
+@@ -0,0 +1,64 @@
++package com.liskovsoft.sharedutils.okhttp;
++
++import com.liskovsoft.sharedutils.mylogger.Log;
++
++import java.security.KeyStore;
++import java.util.Arrays;
++
++import javax.net.ssl.HostnameVerifier;
++import javax.net.ssl.HttpsURLConnection;
++import javax.net.ssl.SSLContext;
++import javax.net.ssl.SSLSocketFactory;
++import javax.net.ssl.TrustManager;
++import javax.net.ssl.TrustManagerFactory;
++import javax.net.ssl.X509TrustManager;
++
++/**
++ * Helper for installing {@link CustomSniSSLSocketFactory} and {@link CustomSniHostnameVerifier}
++ * as the process-wide defaults for {@link HttpsURLConnection} (covering Glide and ExoPlayer
++ * DefaultHttpDataSource) and creating system-trusted factories for OkHttp.
++ */
++public final class CustomSniHelper {
++    private static final String TAG = CustomSniHelper.class.getSimpleName();
++
++    private CustomSniHelper() {
++    }
++
++    public static X509TrustManager getSystemTrustManager() throws Exception {
++        TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(
++                TrustManagerFactory.getDefaultAlgorithm());
++        trustManagerFactory.init((KeyStore) null);
++        TrustManager[] trustManagers = trustManagerFactory.getTrustManagers();
++        if (trustManagers.length != 1 || !(trustManagers[0] instanceof X509TrustManager)) {
++            throw new IllegalStateException("Unexpected default trust managers: " + Arrays.toString(trustManagers));
++        }
++        return (X509TrustManager) trustManagers[0];
++    }
++
++    public static SSLSocketFactory createSystemCustomSniSocketFactory(X509TrustManager trustManager) throws Exception {
++        SSLContext sslContext = SSLContext.getInstance("TLS");
++        sslContext.init(null, new TrustManager[]{trustManager}, null);
++        return new CustomSniSSLSocketFactory(sslContext.getSocketFactory());
++    }
++
++    /**
++     * Installs custom SNI socket factory and hostname verifier as defaults for
++     * {@link HttpsURLConnection}. Safe to call multiple times (avoids double-wrapping).
++     */
++    public static void installDefaultHttps() {
++        try {
++            SSLSocketFactory currentFactory = HttpsURLConnection.getDefaultSSLSocketFactory();
++            if (!(currentFactory instanceof CustomSniSSLSocketFactory)) {
++                X509TrustManager trustManager = getSystemTrustManager();
++                HttpsURLConnection.setDefaultSSLSocketFactory(createSystemCustomSniSocketFactory(trustManager));
++            }
++
++            HostnameVerifier currentVerifier = HttpsURLConnection.getDefaultHostnameVerifier();
++            if (!(currentVerifier instanceof CustomSniHostnameVerifier)) {
++                HttpsURLConnection.setDefaultHostnameVerifier(new CustomSniHostnameVerifier(currentVerifier));
++            }
++        } catch (Exception e) {
++            Log.e(TAG, "Failed to install default HTTPS custom SNI: %s", e.getMessage());
++        }
++    }
++}
+diff --git a/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniHostnameVerifier.java b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniHostnameVerifier.java
+new file mode 100644
+index 0000000..38cc825
+--- /dev/null
++++ b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniHostnameVerifier.java
+@@ -0,0 +1,31 @@
++package com.liskovsoft.sharedutils.okhttp;
++
++import javax.net.ssl.HostnameVerifier;
++import javax.net.ssl.SSLSession;
++
++/**
++ * {@link HostnameVerifier} wrapper that validates the server certificate against either
++ * the original target hostname or its configured custom SNI from {@link CustomSniConfig}.
++ * Non-matching hosts are strictly verified against the original hostname.
++ */
++public class CustomSniHostnameVerifier implements HostnameVerifier {
++    private final HostnameVerifier mDelegate;
++
++    public CustomSniHostnameVerifier(HostnameVerifier delegate) {
++        mDelegate = delegate;
++    }
++
++    @Override
++    public boolean verify(String hostname, SSLSession session) {
++        if (mDelegate.verify(hostname, session)) {
++            return true;
++        }
++
++        String customSni = CustomSniConfig.getCustomSni(hostname);
++        if (customSni != null && !customSni.equalsIgnoreCase(hostname)) {
++            return mDelegate.verify(customSni, session);
++        }
++
++        return false;
++    }
++}
+diff --git a/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniSSLSocket.java b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniSSLSocket.java
+new file mode 100644
+index 0000000..a8f5152
+--- /dev/null
++++ b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniSSLSocket.java
+@@ -0,0 +1,435 @@
++package com.liskovsoft.sharedutils.okhttp;
++
++import android.os.Build;
++
++import androidx.annotation.RequiresApi;
++
++import com.liskovsoft.sharedutils.mylogger.Log;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.lang.reflect.Method;
++import java.net.InetAddress;
++import java.net.SocketAddress;
++import java.net.SocketException;
++import java.nio.channels.SocketChannel;
++import java.util.Collections;
++
++import javax.net.ssl.HandshakeCompletedListener;
++import javax.net.ssl.SNIHostName;
++import javax.net.ssl.SNIServerName;
++import javax.net.ssl.SSLParameters;
++import javax.net.ssl.SSLSession;
++import javax.net.ssl.SSLSocket;
++
++/**
++ * Delegating {@link SSLSocket} wrapper that enforces a custom TLS SNI hostname
++ * before the TLS handshake begins, preventing HTTP clients (e.g. OkHttp Platform
++ * or Android HttpsURLConnection) from overwriting the SNI with the original host.
++ */
++public class CustomSniSSLSocket extends SSLSocket {
++    private static final String TAG = CustomSniSSLSocket.class.getSimpleName();
++
++    private final SSLSocket mDelegate;
++    private final String mCustomSni;
++    private final int mHandshakeTimeoutMs;
++
++    public CustomSniSSLSocket(SSLSocket delegate, String customSni) {
++        this(delegate, customSni, 0);
++    }
++
++    public CustomSniSSLSocket(SSLSocket delegate, String customSni, int handshakeTimeoutMs) {
++        mDelegate = delegate;
++        mCustomSni = customSni;
++        mHandshakeTimeoutMs = handshakeTimeoutMs;
++        applyCustomSni();
++    }
++
++    private void applyCustomSni() {
++        if (mCustomSni == null || mCustomSni.isEmpty()) {
++            return;
++        }
++
++        boolean applied = false;
++
++        // 1. Standard Java 8+ / Android API 24+ SNI via SSLParameters
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N || Build.VERSION.SDK_INT == 0) {
++            try {
++                SSLParameters params = mDelegate.getSSLParameters();
++                if (params != null) {
++                    params.setServerNames(Collections.<SNIServerName>singletonList(new SNIHostName(mCustomSni)));
++                    mDelegate.setSSLParameters(params);
++                    applied = true;
++                }
++            } catch (Throwable ignored) {
++                // Fall through to reflection-based SNI configuration
++            }
++        }
++
++        // 2. Android / Conscrypt SSLSocket setHostname(String) reflection
++        try {
++            Method setUseSessionTickets = mDelegate.getClass().getMethod("setUseSessionTickets", boolean.class);
++            setUseSessionTickets.invoke(mDelegate, true);
++        } catch (Throwable ignored) {
++        }
++
++        try {
++            Method setHostname = mDelegate.getClass().getMethod("setHostname", String.class);
++            setHostname.invoke(mDelegate, mCustomSni);
++            applied = true;
++        } catch (Throwable ignored) {
++        }
++
++        if (!applied) {
++            Log.w(TAG, "Unable to explicitly set custom SNI '%s' on socket %s",
++                    mCustomSni, mDelegate.getClass().getName());
++        }
++    }
++
++    @Override
++    public void setSSLParameters(SSLParameters params) {
++        if (params != null && mCustomSni != null && !mCustomSni.isEmpty()
++                && (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N || Build.VERSION.SDK_INT == 0)) {
++            try {
++                params.setServerNames(Collections.<SNIServerName>singletonList(new SNIHostName(mCustomSni)));
++            } catch (Throwable ignored) {
++            }
++        }
++        mDelegate.setSSLParameters(params);
++    }
++
++    @Override
++    public SSLParameters getSSLParameters() {
++        return mDelegate.getSSLParameters();
++    }
++
++    @Override
++    public void startHandshake() throws IOException {
++        applyCustomSni();
++        if (mHandshakeTimeoutMs > 0) {
++            int previousTimeout = mDelegate.getSoTimeout();
++            mDelegate.setSoTimeout(mHandshakeTimeoutMs);
++            try {
++                mDelegate.startHandshake();
++            } finally {
++                try {
++                    mDelegate.setSoTimeout(previousTimeout);
++                } catch (IOException ignored) {
++                }
++            }
++        } else {
++            mDelegate.startHandshake();
++        }
++    }
++
++    @Override
++    public InputStream getInputStream() throws IOException {
++        return mDelegate.getInputStream();
++    }
++
++    @Override
++    public OutputStream getOutputStream() throws IOException {
++        return mDelegate.getOutputStream();
++    }
++
++    @Override
++    public SSLSession getSession() {
++        return mDelegate.getSession();
++    }
++
++    @Override
++    public SSLSession getHandshakeSession() {
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N || Build.VERSION.SDK_INT == 0) {
++            return mDelegate.getHandshakeSession();
++        }
++        return super.getHandshakeSession();
++    }
++
++    @RequiresApi(api = Build.VERSION_CODES.Q)
++    @Override
++    public String getApplicationProtocol() {
++        return mDelegate.getApplicationProtocol();
++    }
++
++    @RequiresApi(api = Build.VERSION_CODES.Q)
++    @Override
++    public String getHandshakeApplicationProtocol() {
++        return mDelegate.getHandshakeApplicationProtocol();
++    }
++
++    @Override
++    public String[] getSupportedCipherSuites() {
++        return mDelegate.getSupportedCipherSuites();
++    }
++
++    @Override
++    public String[] getEnabledCipherSuites() {
++        return mDelegate.getEnabledCipherSuites();
++    }
++
++    @Override
++    public void setEnabledCipherSuites(String[] suites) {
++        mDelegate.setEnabledCipherSuites(suites);
++    }
++
++    @Override
++    public String[] getSupportedProtocols() {
++        return mDelegate.getSupportedProtocols();
++    }
++
++    @Override
++    public String[] getEnabledProtocols() {
++        return mDelegate.getEnabledProtocols();
++    }
++
++    @Override
++    public void setEnabledProtocols(String[] protocols) {
++        mDelegate.setEnabledProtocols(protocols);
++    }
++
++    @Override
++    public void addHandshakeCompletedListener(HandshakeCompletedListener listener) {
++        mDelegate.addHandshakeCompletedListener(listener);
++    }
++
++    @Override
++    public void removeHandshakeCompletedListener(HandshakeCompletedListener listener) {
++        mDelegate.removeHandshakeCompletedListener(listener);
++    }
++
++    @Override
++    public void setUseClientMode(boolean mode) {
++        mDelegate.setUseClientMode(mode);
++    }
++
++    @Override
++    public boolean getUseClientMode() {
++        return mDelegate.getUseClientMode();
++    }
++
++    @Override
++    public void setNeedClientAuth(boolean need) {
++        mDelegate.setNeedClientAuth(need);
++    }
++
++    @Override
++    public boolean getNeedClientAuth() {
++        return mDelegate.getNeedClientAuth();
++    }
++
++    @Override
++    public void setWantClientAuth(boolean want) {
++        mDelegate.setWantClientAuth(want);
++    }
++
++    @Override
++    public boolean getWantClientAuth() {
++        return mDelegate.getWantClientAuth();
++    }
++
++    @Override
++    public void setEnableSessionCreation(boolean flag) {
++        mDelegate.setEnableSessionCreation(flag);
++    }
++
++    @Override
++    public boolean getEnableSessionCreation() {
++        return mDelegate.getEnableSessionCreation();
++    }
++
++    @Override
++    public void connect(SocketAddress endpoint) throws IOException {
++        mDelegate.connect(endpoint);
++    }
++
++    @Override
++    public void connect(SocketAddress endpoint, int timeout) throws IOException {
++        mDelegate.connect(endpoint, timeout);
++    }
++
++    @Override
++    public void bind(SocketAddress bindpoint) throws IOException {
++        mDelegate.bind(bindpoint);
++    }
++
++    @Override
++    public InetAddress getInetAddress() {
++        return mDelegate.getInetAddress();
++    }
++
++    @Override
++    public InetAddress getLocalAddress() {
++        return mDelegate.getLocalAddress();
++    }
++
++    @Override
++    public int getPort() {
++        return mDelegate.getPort();
++    }
++
++    @Override
++    public int getLocalPort() {
++        return mDelegate.getLocalPort();
++    }
++
++    @Override
++    public SocketAddress getRemoteSocketAddress() {
++        return mDelegate.getRemoteSocketAddress();
++    }
++
++    @Override
++    public SocketAddress getLocalSocketAddress() {
++        return mDelegate.getLocalSocketAddress();
++    }
++
++    @Override
++    public SocketChannel getChannel() {
++        return mDelegate.getChannel();
++    }
++
++    @Override
++    public void setTcpNoDelay(boolean on) throws SocketException {
++        mDelegate.setTcpNoDelay(on);
++    }
++
++    @Override
++    public boolean getTcpNoDelay() throws SocketException {
++        return mDelegate.getTcpNoDelay();
++    }
++
++    @Override
++    public void setSoLinger(boolean on, int linger) throws SocketException {
++        mDelegate.setSoLinger(on, linger);
++    }
++
++    @Override
++    public int getSoLinger() throws SocketException {
++        return mDelegate.getSoLinger();
++    }
++
++    @Override
++    public void sendUrgentData(int data) throws IOException {
++        mDelegate.sendUrgentData(data);
++    }
++
++    @Override
++    public void setOOBInline(boolean on) throws SocketException {
++        mDelegate.setOOBInline(on);
++    }
++
++    @Override
++    public boolean getOOBInline() throws SocketException {
++        return mDelegate.getOOBInline();
++    }
++
++    @Override
++    public synchronized void setSoTimeout(int timeout) throws SocketException {
++        mDelegate.setSoTimeout(timeout);
++    }
++
++    @Override
++    public synchronized int getSoTimeout() throws SocketException {
++        return mDelegate.getSoTimeout();
++    }
++
++    @Override
++    public synchronized void setSendBufferSize(int size) throws SocketException {
++        mDelegate.setSendBufferSize(size);
++    }
++
++    @Override
++    public synchronized int getSendBufferSize() throws SocketException {
++        return mDelegate.getSendBufferSize();
++    }
++
++    @Override
++    public synchronized void setReceiveBufferSize(int size) throws SocketException {
++        mDelegate.setReceiveBufferSize(size);
++    }
++
++    @Override
++    public synchronized int getReceiveBufferSize() throws SocketException {
++        return mDelegate.getReceiveBufferSize();
++    }
++
++    @Override
++    public void setKeepAlive(boolean on) throws SocketException {
++        mDelegate.setKeepAlive(on);
++    }
++
++    @Override
++    public boolean getKeepAlive() throws SocketException {
++        return mDelegate.getKeepAlive();
++    }
++
++    @Override
++    public void setTrafficClass(int tc) throws SocketException {
++        mDelegate.setTrafficClass(tc);
++    }
++
++    @Override
++    public int getTrafficClass() throws SocketException {
++        return mDelegate.getTrafficClass();
++    }
++
++    @Override
++    public void setReuseAddress(boolean on) throws SocketException {
++        mDelegate.setReuseAddress(on);
++    }
++
++    @Override
++    public boolean getReuseAddress() throws SocketException {
++        return mDelegate.getReuseAddress();
++    }
++
++    @Override
++    public synchronized void close() throws IOException {
++        mDelegate.close();
++    }
++
++    @Override
++    public void shutdownInput() throws IOException {
++        mDelegate.shutdownInput();
++    }
++
++    @Override
++    public void shutdownOutput() throws IOException {
++        mDelegate.shutdownOutput();
++    }
++
++    @Override
++    public boolean isConnected() {
++        return mDelegate.isConnected();
++    }
++
++    @Override
++    public boolean isBound() {
++        return mDelegate.isBound();
++    }
++
++    @Override
++    public boolean isClosed() {
++        return mDelegate.isClosed();
++    }
++
++    @Override
++    public boolean isInputShutdown() {
++        return mDelegate.isInputShutdown();
++    }
++
++    @Override
++    public boolean isOutputShutdown() {
++        return mDelegate.isOutputShutdown();
++    }
++
++    @Override
++    public void setPerformancePreferences(int connectionTime, int latency, int bandwidth) {
++        mDelegate.setPerformancePreferences(connectionTime, latency, bandwidth);
++    }
++
++    @Override
++    public String toString() {
++        return mDelegate.toString();
++    }
++}
+diff --git a/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniSSLSocketFactory.java b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniSSLSocketFactory.java
+new file mode 100644
+index 0000000..4d9b84e
+--- /dev/null
++++ b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/CustomSniSSLSocketFactory.java
+@@ -0,0 +1,98 @@
++package com.liskovsoft.sharedutils.okhttp;
++
++import java.io.IOException;
++import java.net.InetAddress;
++import java.net.InetSocketAddress;
++import java.net.Socket;
++import java.net.UnknownHostException;
++
++import javax.net.ssl.SSLSocket;
++import javax.net.ssl.SSLSocketFactory;
++
++/**
++ * {@link SSLSocketFactory} wrapper that replaces TLS SNI with the configured custom SNI
++ * from {@link CustomSniConfig} for matching target hosts while keeping the TCP connection
++ * pointed at the original host.
++ */
++public class CustomSniSSLSocketFactory extends SSLSocketFactory {
++    private final SSLSocketFactory mDelegate;
++
++    public CustomSniSSLSocketFactory(SSLSocketFactory delegate) {
++        mDelegate = delegate;
++    }
++
++    @Override
++    public String[] getDefaultCipherSuites() {
++        return mDelegate.getDefaultCipherSuites();
++    }
++
++    @Override
++    public String[] getSupportedCipherSuites() {
++        return mDelegate.getSupportedCipherSuites();
++    }
++
++    @Override
++    public Socket createSocket() throws IOException {
++        return mDelegate.createSocket();
++    }
++
++    @Override
++    public Socket createSocket(Socket s, String host, int port, boolean autoClose) throws IOException {
++        String customSni = CustomSniConfig.getCustomSni(host);
++        if (customSni == null) {
++            return mDelegate.createSocket(s, host, port, autoClose);
++        }
++
++        Socket sslSocket = mDelegate.createSocket(s, customSni, port, autoClose);
++        if (sslSocket instanceof SSLSocket) {
++            int handshakeTimeoutMs = CustomSniConfig.getTlsHandshakeTimeoutMs(host);
++            return new CustomSniSSLSocket((SSLSocket) sslSocket, customSni, handshakeTimeoutMs);
++        }
++        return sslSocket;
++    }
++
++    @Override
++    public Socket createSocket(String host, int port) throws IOException, UnknownHostException {
++        String customSni = CustomSniConfig.getCustomSni(host);
++        if (customSni == null) {
++            return mDelegate.createSocket(host, port);
++        }
++
++        Socket plainSocket = new Socket();
++        int connectTimeoutMs = CustomSniConfig.getTlsHandshakeTimeoutMs(host);
++        if (connectTimeoutMs > 0) {
++            plainSocket.connect(new InetSocketAddress(host, port), connectTimeoutMs);
++        } else {
++            plainSocket.connect(new InetSocketAddress(host, port));
++        }
++        return createSocket(plainSocket, host, port, true);
++    }
++
++    @Override
++    public Socket createSocket(String host, int port, InetAddress localHost, int localPort) throws IOException, UnknownHostException {
++        String customSni = CustomSniConfig.getCustomSni(host);
++        if (customSni == null) {
++            return mDelegate.createSocket(host, port, localHost, localPort);
++        }
++
++        Socket plainSocket = new Socket();
++        plainSocket.bind(new InetSocketAddress(localHost, localPort));
++        int connectTimeoutMs = CustomSniConfig.getTlsHandshakeTimeoutMs(host);
++        if (connectTimeoutMs > 0) {
++            plainSocket.connect(new InetSocketAddress(host, port), connectTimeoutMs);
++        } else {
++            plainSocket.connect(new InetSocketAddress(host, port));
++        }
++        return createSocket(plainSocket, host, port, true);
++    }
++
++    @Override
++    public Socket createSocket(InetAddress host, int port) throws IOException {
++        return mDelegate.createSocket(host, port);
++    }
++
++    @Override
++    public Socket createSocket(InetAddress address, int port, InetAddress localAddress, int localPort) throws IOException {
++        return mDelegate.createSocket(address, port, localAddress, localPort);
++    }
++}
+diff --git a/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/OkHttpCommons.java b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/OkHttpCommons.java
+index 69ddef4..5759f74 100644
+--- a/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/OkHttpCommons.java
++++ b/sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/OkHttpCommons.java
+@@ -17,6 +17,7 @@ import okhttp3.OkHttpClient;
+ import okhttp3.OkHttpClient.Builder;
+ import okhttp3.Protocol;
+ import okhttp3.TlsVersion;
++import okhttp3.internal.tls.OkHostnameVerifier;
+ import okhttp3.logging.HttpLoggingInterceptor;
+ 
+ import javax.net.ssl.SSLContext;
+@@ -241,16 +242,41 @@ final class OkHttpCommons {
+             final SSLContext sslContext = SSLContext.getInstance("TLSv1.2");
+             sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
+             // Create an ssl socket factory with our all-trusting manager
+-            final SSLSocketFactory sslSocketFactory = new Tls12SocketFactory(sslContext.getSocketFactory());
++            final SSLSocketFactory sslSocketFactory = new CustomSniSSLSocketFactory(
++                    new Tls12SocketFactory(sslContext.getSocketFactory()));
+ 
+-            //builder.sslSocketFactory(sslSocketFactory, (X509TrustManager)trustAllCerts[0]);
+-            builder.sslSocketFactory(sslSocketFactory);
+-            //builder.hostnameVerifier((hostname, session) -> true);
++            builder.sslSocketFactory(sslSocketFactory, (X509TrustManager) trustAllCerts[0]);
++            builder.hostnameVerifier(new CustomSniHostnameVerifier(OkHostnameVerifier.INSTANCE));
+         } catch (Exception e) {
+             Log.w(TAG, "Exception while configuring IgnoreSslCertificate: " + e, e);
+         }
+     }
+ 
++    private static void setupCustomSni(OkHttpClient.Builder okBuilder) {
++        // Apply shorter connect timeout for *.googlevideo.com so blocked/stalled TLS nodes fail fast
++        okBuilder.addInterceptor(chain -> {
++            int timeoutMs = CustomSniConfig.getTlsHandshakeTimeoutMs(chain.request().url().host());
++            if (timeoutMs > 0) {
++                return chain.withConnectTimeout(timeoutMs, TimeUnit.MILLISECONDS).proceed(chain.request());
++            }
++            return chain.proceed(chain.request());
++        });
++
++        if (VERSION.SDK_INT <= 24) {
++            // SSLSocketFactory and HostnameVerifier already configured in configureToIgnoreCertificate
++            return;
++        }
++
++        try {
++            X509TrustManager trustManager = CustomSniHelper.getSystemTrustManager();
++            SSLSocketFactory sslSocketFactory = CustomSniHelper.createSystemCustomSniSocketFactory(trustManager);
++            okBuilder.sslSocketFactory(sslSocketFactory, trustManager);
++            okBuilder.hostnameVerifier(new CustomSniHostnameVerifier(OkHostnameVerifier.INSTANCE));
++        } catch (Exception e) {
++            Log.e(TAG, "Failed to setup custom SNI on OkHttpClient: " + e.getMessage());
++        }
++    }
++
+     /**
+      * Fix for {@link okhttp3.internal.http2.StreamResetException}: stream was reset: CANCEL<br/>
+      * Force HTTP 1.1 protocol<br/>
+@@ -288,6 +314,7 @@ final class OkHttpCommons {
+         setupConnectionFix(okBuilder);
+         setupConnectionParams(okBuilder);
+         configureToIgnoreCertificate(okBuilder);
++        setupCustomSni(okBuilder);
+         fixStreamResetError(okBuilder); // Should I move the line to Retrofit utils?
+         enableDecompression(okBuilder);
+         //enableRateLimiter(okBuilder)
+diff --git a/sharedutils/src/test/java/com/liskovsoft/sharedutils/okhttp/CustomSniTest.java b/sharedutils/src/test/java/com/liskovsoft/sharedutils/okhttp/CustomSniTest.java
+new file mode 100644
+index 0000000..442a3a5
+--- /dev/null
++++ b/sharedutils/src/test/java/com/liskovsoft/sharedutils/okhttp/CustomSniTest.java
+@@ -0,0 +1,220 @@
++package com.liskovsoft.sharedutils.okhttp;
++
++import org.junit.Test;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.net.InetAddress;
++import java.net.ServerSocket;
++import java.net.Socket;
++import java.net.SocketTimeoutException;
++import java.nio.charset.StandardCharsets;
++import java.util.Collections;
++import java.util.List;
++import java.util.concurrent.atomic.AtomicReference;
++
++import javax.net.ssl.HostnameVerifier;
++import javax.net.ssl.SNIHostName;
++import javax.net.ssl.SNIServerName;
++import javax.net.ssl.SSLContext;
++import javax.net.ssl.SSLParameters;
++import javax.net.ssl.SSLSession;
++import javax.net.ssl.SSLSocket;
++import javax.net.ssl.SSLSocketFactory;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertNotNull;
++import static org.junit.Assert.assertNull;
++import static org.junit.Assert.assertTrue;
++
++public class CustomSniTest {
++
++    @Test
++    public void testMatchingHostsReturnCustomSni() {
++        String expected = "www.google.com";
++
++        String[] matchingHosts = {
++                "youtu.be",
++                "YOUTU.BE",
++                "youtu.be.",
++                "rr1---sn-4g5ednsd.googlevideo.com",
++                "r1.sn-a5mlrn7z.c.googlevideo.com",
++                "www.youtube.com",
++                "m.youtube.com",
++                "music.youtube.com",
++                "youtube.com",
++                "i.ytimg.com",
++                "i9.ytimg.com",
++                "s.ytimg.com",
++                "yt3.ggpht.com",
++                "yt3.googleusercontent.com",
++                "lh3.googleusercontent.com",
++                "lh4.googleusercontent.com",
++                "lh5.googleusercontent.com",
++                "lh6.googleusercontent.com",
++                "youtubei.googleapis.com"
++        };
++
++        for (String host : matchingHosts) {
++            assertEquals("Expected custom SNI for " + host, expected, CustomSniConfig.getCustomSni(host));
++        }
++    }
++
++    @Test
++    public void testNonMatchingHostsReturnNull() {
++        String[] nonMatchingHosts = {
++                null,
++                "",
++                "   ",
++                "www.google.com",
++                "google.com",
++                "github.com",
++                "evilyoutube.com",
++                "evilgooglevideo.com",
++                "googlevideo.com",
++                "ytimg.com",
++                "ggpht.com",
++                "googleusercontent.com",
++                "yt4.googleusercontent.com",
++                "accounts.google.com",
++                "accounts.google.ru",
++                "play.google.com",
++                "youtube-nocookie.com",
++                "www.youtube-nocookie.com",
++                "youtube.googleapis.com",
++                "example.com"
++        };
++
++        for (String host : nonMatchingHosts) {
++            assertNull("Expected null custom SNI for " + host, CustomSniConfig.getCustomSni(host));
++        }
++    }
++
++    @Test
++    public void testCustomSniHostnameVerifier() {
++        HostnameVerifier googleCertOnly = (hostname, session) -> "www.google.com".equals(hostname);
++        CustomSniHostnameVerifier verifier = new CustomSniHostnameVerifier(googleCertOnly);
++
++        // Matching host accepted when server presents www.google.com cert
++        assertTrue(verifier.verify("www.youtube.com", null));
++        assertTrue(verifier.verify("rr1---sn-abc.googlevideo.com", null));
++        assertTrue(verifier.verify("lh3.googleusercontent.com", null));
++
++        // Non-matching host MUST be rejected even when server presents www.google.com cert
++        assertFalse(verifier.verify("example.com", null));
++        assertFalse(verifier.verify("github.com", null));
++
++        // Matching host accepted when server presents its own cert
++        HostnameVerifier youtubeCertOnly = (hostname, session) -> "www.youtube.com".equals(hostname);
++        CustomSniHostnameVerifier verifier2 = new CustomSniHostnameVerifier(youtubeCertOnly);
++        assertTrue(verifier2.verify("www.youtube.com", null));
++        assertFalse(verifier2.verify("rr1---sn-abc.googlevideo.com", null));
++    }
++
++    @Test
++    public void testCustomSniSSLSocketEnforcesSni() throws Exception {
++        SSLContext sslContext = SSLContext.getInstance("TLS");
++        sslContext.init(null, null, null);
++        SSLSocketFactory baseFactory = sslContext.getSocketFactory();
++        CustomSniSSLSocketFactory customFactory = new CustomSniSSLSocketFactory(baseFactory);
++
++        try (ServerSocket server = new ServerSocket(0, 5, InetAddress.getLoopbackAddress())) {
++            int port = server.getLocalPort();
++
++            // 1. Matching host: wrapped in CustomSniSSLSocket and resists SNI overwrite
++            try (Socket raw1 = new Socket(InetAddress.getLoopbackAddress(), port);
++                 Socket serverConn1 = server.accept();
++                 Socket wrapped = customFactory.createSocket(raw1, "www.youtube.com", 443, true)) {
++                assertTrue("Expected CustomSniSSLSocket for matching host", wrapped instanceof CustomSniSSLSocket);
++
++                SSLSocket sslSocket = (SSLSocket) wrapped;
++                // Simulate OkHttp / platform attempting to overwrite SNI with original host
++                SSLParameters overwriteParams = sslSocket.getSSLParameters();
++                overwriteParams.setServerNames(Collections.<SNIServerName>singletonList(new SNIHostName("www.youtube.com")));
++                sslSocket.setSSLParameters(overwriteParams);
++
++                List<SNIServerName> serverNames = sslSocket.getSSLParameters().getServerNames();
++                assertNotNull(serverNames);
++                assertEquals(1, serverNames.size());
++                assertEquals("www.google.com", ((SNIHostName) serverNames.get(0)).getAsciiName());
++
++                // Verify Java 9+ / Android 10+ ALPN getters delegate instead of throwing UnsupportedOperationException
++                sslSocket.getApplicationProtocol();
++                sslSocket.getHandshakeApplicationProtocol();
++
++                // Verify the actual TLS ClientHello sent on the wire carries SNI www.google.com
++                AtomicReference<byte[]> clientHelloBytes = new AtomicReference<>();
++                Thread reader = new Thread(() -> {
++                    try {
++                        serverConn1.setSoTimeout(2000);
++                        InputStream in = serverConn1.getInputStream();
++                        byte[] buf = new byte[4096];
++                        int n = in.read(buf);
++                        if (n > 0) {
++                            byte[] data = new byte[n];
++                            System.arraycopy(buf, 0, data, 0, n);
++                            clientHelloBytes.set(data);
++                        }
++                        serverConn1.close();
++                    } catch (IOException ignored) {
++                    }
++                });
++                reader.start();
++
++                sslSocket.setSoTimeout(2000);
++                try {
++                    sslSocket.startHandshake();
++                } catch (IOException expected) {
++                    // Server closes after reading ClientHello
++                }
++                reader.join(3000);
++
++                byte[] hello = clientHelloBytes.get();
++                assertNotNull("Expected TLS ClientHello bytes", hello);
++                String helloAscii = new String(hello, StandardCharsets.ISO_8859_1);
++                assertTrue("ClientHello must contain custom SNI www.google.com", helloAscii.contains("www.google.com"));
++                assertFalse("ClientHello must NOT contain original host www.youtube.com", helloAscii.contains("www.youtube.com"));
++            }
++
++            // 2. Non-matching host should NOT be wrapped in CustomSniSSLSocket
++            try (Socket raw2 = new Socket(InetAddress.getLoopbackAddress(), port);
++                 Socket serverConn2 = server.accept();
++                 Socket plainWrapped = customFactory.createSocket(raw2, "example.com", 443, true)) {
++                assertFalse("Expected unwrapped SSLSocket for non-matching host", plainWrapped instanceof CustomSniSSLSocket);
++            }
++        }
++    }
++
++    @Test
++    public void testGooglevideoTlsHandshakeTimeout() throws Exception {
++        assertEquals(3_000, CustomSniConfig.getTlsHandshakeTimeoutMs("rr1---sn-4g5ednsd.googlevideo.com"));
++        assertEquals(3_000, CustomSniConfig.getTlsHandshakeTimeoutMs("R2.SN-ABC.C.GOOGLEVIDEO.COM."));
++        assertEquals(0, CustomSniConfig.getTlsHandshakeTimeoutMs("googlevideo.com"));
++        assertEquals(0, CustomSniConfig.getTlsHandshakeTimeoutMs("www.youtube.com"));
++
++        SSLContext sslContext = SSLContext.getInstance("TLS");
++        sslContext.init(null, null, null);
++        CustomSniSSLSocketFactory customFactory = new CustomSniSSLSocketFactory(sslContext.getSocketFactory());
++
++        // Simulate a blackholed *.googlevideo.com server that accepts TCP but never responds to TLS ClientHello
++        try (ServerSocket blackholeServer = new ServerSocket(0, 5, InetAddress.getLoopbackAddress());
++             Socket raw = new Socket(InetAddress.getLoopbackAddress(), blackholeServer.getLocalPort());
++             Socket accepted = blackholeServer.accept();
++             SSLSocket sslSocket = (SSLSocket) customFactory.createSocket(raw, "rr1---sn-blocked.googlevideo.com", 443, true)) {
++            sslSocket.setSoTimeout(20_000);
++            long startMs = System.currentTimeMillis();
++            boolean timedOut = false;
++            try {
++                sslSocket.startHandshake();
++            } catch (SocketTimeoutException expected) {
++                timedOut = true;
++            }
++            long elapsedMs = System.currentTimeMillis() - startMs;
++
++            assertTrue("Expected SocketTimeoutException on stalled *.googlevideo.com TLS handshake", timedOut);
++            assertTrue("Expected handshake timeout around 3s, got " + elapsedMs + "ms", elapsedMs >= 2500 && elapsedMs < 5000);
++            assertEquals("Original socket timeout should be restored after handshake", 20_000, sslSocket.getSoTimeout());
++        }
++    }
++}

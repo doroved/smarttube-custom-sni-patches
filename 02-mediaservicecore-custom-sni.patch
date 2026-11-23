@@ -1,0 +1,47 @@
+diff --git a/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/lounge/LoungeService.java b/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/lounge/LoungeService.java
+index 06c72855..1c4e44dc 100644
+--- a/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/lounge/LoungeService.java
++++ b/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/lounge/LoungeService.java
+@@ -4,6 +4,7 @@ import com.liskovsoft.mediaserviceinterfaces.RemoteControlService;
+ import com.liskovsoft.sharedutils.helpers.AppInfoHelpers;
+ import com.liskovsoft.sharedutils.helpers.Helpers;
+ import com.liskovsoft.sharedutils.mylogger.Log;
++import com.liskovsoft.sharedutils.okhttp.OkHttpManager;
+ import com.liskovsoft.sharedutils.prefs.GlobalPreferences;
+ import com.liskovsoft.googlecommon.common.converters.jsonpath.typeadapter.JsonPathTypeAdapter;
+ import com.liskovsoft.googlecommon.common.helpers.RetrofitHelper;
+@@ -202,7 +203,7 @@ public class LoungeService {
+                 mSessionId,
+                 mGSessionId);
+         Request request = new Builder().url(url).build();
+-        OkHttpClient.Builder builder = new OkHttpClient.Builder();
++        OkHttpClient.Builder builder = OkHttpManager.instance().getClient().newBuilder();
+ 
+         // No command during one minute could be a sign of hanged connection.
+         builder.readTimeout(60_000, TimeUnit.MILLISECONDS);
+diff --git a/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service/internal/FormatInfoWrapper.kt b/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service/internal/FormatInfoWrapper.kt
+index d97984c3..d39eb9fe 100644
+--- a/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service/internal/FormatInfoWrapper.kt
++++ b/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service/internal/FormatInfoWrapper.kt
+@@ -22,21 +22,7 @@ internal object FormatInfoWrapper {
+     private val lock = Any()
+     private val CLIENT_LIST = arrayOf(
+         Pair(AppClient.TV, ProviderType.LEGACY), // Supports auth. Fixes "please sign in" bug! (the best for Premium users)
+-        Pair(AppClient.TV_SAMSUNG, ProviderType.LEGACY), // Supports auth. Still contains DASH formats
+         Pair(AppClient.WEB, ProviderType.INNERTUBE), // Fix video clip blocked in current location
+-        Pair(AppClient.VISIONOS, ProviderType.LEGACY), // no url formats
+-        Pair(AppClient.TV_DOWNGRADED, ProviderType.LEGACY), // works with old UAs like old Cobalt and old Xbox (non-tcl players)
+-        Pair(AppClient.WEB_EMBED, ProviderType.LEGACY), // Restricted (18+) videos (not working)
+-        //AppClient.ANDROID_REEL, // doesn't require pot and cipher (hangs on all engines)
+-        Pair(AppClient.WEB_SAFARI, ProviderType.LEGACY),
+-        Pair(AppClient.IOS, ProviderType.LEGACY),
+-        Pair(AppClient.GEO, ProviderType.LEGACY), // Fix video clip blocked in current location
+-        Pair(AppClient.MWEB, ProviderType.LEGACY), // single audio language
+-        //AppClient.TV_LEGACY,
+-        //AppClient.TV_EMBED, // single audio language
+-        Pair(AppClient.ANDROID_VR, ProviderType.LEGACY), // doesn't require pot and cipher (often hangs?)
+-        //AppClient.TV_SIMPLY, // hangs?
+-        //AppClient.ANDROID_SDK_LESS, // doesn't require pot (hangs on Cronet!)
+     )
+     private var mActualClient: Pair<AppClient, ProviderType>? = null
+     private var mNextClient: Pair<AppClient, ProviderType>? = null
