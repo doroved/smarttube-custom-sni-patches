@@ -175,23 +175,80 @@ index 36fadb4e7..e43d5058e 100644
  
  dependencies {
 diff --git a/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/main/MainApplication.java b/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/main/MainApplication.java
-index 8310e90b7..feab8f3df 100644
+index 8310e90b7..bf4990849 100644
 --- a/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/main/MainApplication.java
 +++ b/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/main/MainApplication.java
-@@ -8,6 +8,7 @@ import androidx.work.Configuration;
+@@ -1,5 +1,6 @@
+ package com.liskovsoft.smartyoutubetv2.tv.ui.main;
+ 
++import android.content.SharedPreferences;
+ import android.os.Build.VERSION;
+ 
+ import androidx.annotation.NonNull;
+@@ -8,6 +9,8 @@ import androidx.work.Configuration;
  
  import com.liskovsoft.sharedutils.helpers.Helpers;
  import com.liskovsoft.sharedutils.helpers.MessageHelpers;
 +import com.liskovsoft.sharedutils.okhttp.CustomSniHelper;
++import com.liskovsoft.smartyoutubetv2.tv.BuildConfig;
  import com.liskovsoft.smartyoutubetv2.common.app.models.data.BrowseSection;
  import com.liskovsoft.smartyoutubetv2.common.app.presenters.BrowsePresenter;
  import com.liskovsoft.smartyoutubetv2.common.app.views.AddDeviceView;
-@@ -83,6 +84,8 @@ public class MainApplication extends MultiDexApplication implements Configuratio
+@@ -37,6 +40,7 @@ import com.liskovsoft.smartyoutubetv2.tv.ui.webbrowser.WebBrowserActivity;
+ 
+ import org.conscrypt.Conscrypt;
+ 
++import java.io.File;
+ import java.lang.Thread.UncaughtExceptionHandler;
+ import java.security.Provider;
+ import java.security.Security;
+@@ -83,6 +87,9 @@ public class MainApplication extends MultiDexApplication implements Configuratio
              }
          }
  
 +        CustomSniHelper.installDefaultHttps();
++        clearCacheOnAppUpdate();
 +
          setupGlobalExceptionHandler();
          setupViewManager();
      }
+@@ -98,6 +105,39 @@ public class MainApplication extends MultiDexApplication implements Configuratio
+         return new Configuration.Builder().build();
+     }
+ 
++    private void clearCacheOnAppUpdate() {
++        try {
++            SharedPreferences prefs = getSharedPreferences("doroved_patch_meta", MODE_PRIVATE);
++            int lastVersionCode = prefs.getInt("last_version_code", -1);
++            int currentVersionCode = BuildConfig.VERSION_CODE;
++            if (lastVersionCode != -1 && lastVersionCode != currentVersionCode) {
++                deleteDirContents(getCacheDir());
++                deleteDirContents(getExternalCacheDir());
++            }
++            if (lastVersionCode != currentVersionCode) {
++                prefs.edit().putInt("last_version_code", currentVersionCode).apply();
++            }
++        } catch (Throwable ignored) {
++        }
++    }
++
++    private static void deleteDirContents(File dir) {
++        if (dir == null || !dir.isDirectory()) {
++            return;
++        }
++        File[] children = dir.listFiles();
++        if (children == null) {
++            return;
++        }
++        for (File child : children) {
++            if (child.isDirectory()) {
++                deleteDirContents(child);
++            }
++            //noinspection ResultOfMethodCallIgnored
++            child.delete();
++        }
++    }
++
+     private void setupViewManager() {
+         ViewManager viewManager = ViewManager.instance(this);
+ 
