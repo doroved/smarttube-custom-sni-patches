@@ -78,20 +78,20 @@ jobs:
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set up JDK 17
-        if: steps.meta.outputs.should_build == 'true'
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-          cache: 'gradle'
-
       - name: Clone SmartTube at target tag
         if: steps.meta.outputs.should_build == 'true'
         run: |
           git clone --depth 1 --branch "${{ steps.meta.outputs.upstream_tag }}" \
             --recurse-submodules --shallow-submodules \
             https://github.com/yuliskov/SmartTube.git SmartTube
+
+      - name: Set up JDK 17
+        if: steps.meta.outputs.should_build == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
 
       - name: Apply doroved-patch patches
         if: steps.meta.outputs.should_build == 'true'
