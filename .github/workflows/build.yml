@@ -169,7 +169,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           python3 - <<'PYEOF'
-          import json, os, pathlib
+          import json, os, pathlib, subprocess
 
           upstream = os.environ["UPSTREAM_TAG"]
           patch_ver = os.environ["PATCH_VER"]
@@ -182,11 +182,21 @@ jobs:
 
           data = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
 
-          existing_codes = [v.get("versionCode", 0) for k, v in data.items() if k != "package" and isinstance(v, dict)]
+          existing_versions = {k: v for k, v in data.items() if k != "package" and isinstance(v, dict)}
+          existing_codes = [v.get("versionCode", 0) for v in existing_versions.values()]
           max_existing_code = max(existing_codes) if existing_codes else 0
 
+          # Check if this upstream SmartTube version or this patch version was already published before
+          upstream_already_present = any(
+              k == upstream or k.startswith(f"{upstream} ") for k in existing_versions
+          )
+          patch_already_present = any(
+              f"doroved-patch v{patch_ver})" in k for k in existing_versions
+          )
+
+          package_block = data.get("package", {})
           if version_code >= max_existing_code:
-              data["package"] = {
+              package_block = {
                   "downloadUrlList_armeabi-v7a": [
                       f"{base_url}/SmartTube_stable_{upstream}_doroved-patch-v{patch_ver}_armeabi-v7a.apk"
                   ],
@@ -202,9 +212,22 @@ jobs:
                   "downloadUrl": f"{base_url}/SmartTube_stable_{upstream}_doroved-patch-v{patch_ver}_universal.apk",
               }
 
-          version_key = f"{upstream} (by doroved-patch v{patch_ver})"
+          # Read patch-specific changelog from PATCH_CHANGELOG.json (fallback to latest commit message)
+          patch_cl_path = pathlib.Path("PATCH_CHANGELOG.json")
+          patch_notes = {}
+          if patch_cl_path.exists():
+              patch_cl_all = json.loads(patch_cl_path.read_text(encoding="utf-8"))
+              patch_notes = patch_cl_all.get(str(patch_ver), {})
 
-          # Pull localized changelogs (changelog, changelog_ru, changelog_uk, etc.) from upstream smarttube_stable2.json
+          commit_msg = subprocess.check_output(["git", "log", "-1", "--pretty=%s"], text=True).strip()
+          patch_en = [f"[doroved-patch v{patch_ver}] {line}" for line in patch_notes.get("en", [])]
+          patch_ru = [f"[doroved-patch v{patch_ver}] {line}" for line in patch_notes.get("ru", [])]
+          if not patch_en:
+              patch_en = [f"[doroved-patch v{patch_ver}] {commit_msg}"]
+          if not patch_ru:
+              patch_ru = [f"[doroved-patch v{patch_ver}] {commit_msg}"]
+
+          # Read upstream localized changelogs from smarttube_stable2.json
           upstream_path = pathlib.Path("upstream_stable.json")
           upstream_entry = {}
           if upstream_path.exists():
@@ -213,19 +236,35 @@ jobs:
 
           entry = {"versionCode": version_code}
 
-          en_list = list(upstream_entry.get("changelog", []))
-          entry["changelog"] = [f"[doroved-patch v{patch_ver}] Custom SNI + 3s googlevideo TLS timeout"] + en_list
+          if upstream_already_present:
+              # Patch-only update on the same SmartTube version: only include new patch changes
+              entry["changelog"] = patch_en
+              entry["changelog_ru"] = patch_ru
+          else:
+              # New SmartTube release: include upstream changelogs + new patch notes only if patch version is new
+              en_prefix = patch_en if not patch_already_present else []
+              ru_prefix = patch_ru if not patch_already_present else []
 
-          ru_list = list(upstream_entry.get("changelog_ru", []))
-          entry["changelog_ru"] = [f"[doroved-patch v{patch_ver}] Кастомный SNI + таймаут 3 сек на googlevideo"] + ru_list
+              entry["changelog"] = en_prefix + list(upstream_entry.get("changelog", []))
+              entry["changelog_ru"] = ru_prefix + list(upstream_entry.get("changelog_ru", []))
+              for k, v in upstream_entry.items():
+                  if k.startswith("changelog_") and k != "changelog_ru" and isinstance(v, list):
+                      entry[k] = en_prefix + list(v)
 
-          for k, v in upstream_entry.items():
-              if k.startswith("changelog_") and k != "changelog_ru" and isinstance(v, list):
-                  entry[k] = [f"[doroved-patch v{patch_ver}] Custom SNI + 3s googlevideo TLS timeout"] + list(v)
+              if not entry["changelog"]:
+                  entry["changelog"] = [f"SmartTube {upstream} (doroved-patch v{patch_ver})"]
+              if not entry["changelog_ru"]:
+                  entry["changelog_ru"] = [f"SmartTube {upstream} (doroved-patch v{patch_ver})"]
 
-          data[version_key] = entry
+          version_key = f"{upstream} (by doroved-patch v{patch_ver})"
+          existing_versions[version_key] = entry
 
-          manifest_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          # Rebuild stable.json with "package" first, followed by versions sorted by versionCode descending
+          ordered = {"package": package_block}
+          for k, v in sorted(existing_versions.items(), key=lambda kv: kv[1].get("versionCode", 0), reverse=True):
+              ordered[k] = v
+
+          manifest_path.write_text(json.dumps(ordered, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           PYEOF
 
           git config user.name "github-actions[bot]"

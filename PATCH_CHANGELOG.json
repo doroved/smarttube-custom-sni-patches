@@ -1,0 +1,18 @@
+{
+  "2": {
+    "en": [
+      "Auto-clear app cache after update to prevent 403 / PoToken errors"
+    ],
+    "ru": [
+      "Автоочистка кэша приложения после обновления (исправление ошибок 403 / PoToken)"
+    ]
+  },
+  "1": {
+    "en": [
+      "Custom SNI (www.google.com), 3s googlevideo TLS timeout, TV/WEB clients, OkHttp lock"
+    ],
+    "ru": [
+      "Кастомный SNI (www.google.com), таймаут 3 сек на googlevideo, клиенты TV/WEB, фиксация OkHttp"
+    ]
+  }
+}

@@ -14,43 +14,31 @@
     ],
     "downloadUrl": "https://github.com/doroved/smarttube-custom-sni-patches/releases/download/32.80-doroved-patch-v2/SmartTube_stable_32.80_doroved-patch-v2_universal.apk"
   },
-  "32.80 (by doroved-patch v1)": {
-    "versionCode": 2470001,
-    "changelog": [
-      "[doroved-patch v1] Custom SNI + 3s googlevideo TLS timeout",
-      "Fix code generation for casting from phone",
-      "Added option to quickly skip chapters to Settings/General/Mapping/Next chapter with UP button",
-      "Minor playback fixes"
-    ],
-    "changelog_ru": [
-      "[doroved-patch v1] Кастомный SNI + таймаут 3 сек на googlevideo",
-      "Исправление генерации кода для трансляции с телефона",
-      "Добавлена опция быстрого пропуска глав кнопкой Вверх (Настройки/Общие/Привязки/Следующая глава кнопкой Вверх)",
-      "Небольшие исправления воспроизведения"
-    ],
-    "changelog_uk": [
-      "[doroved-patch v1] Custom SNI + 3s googlevideo TLS timeout",
-      "Виправлення генерації коду для трансляції з телефона",
-      "Додано опцію швидкого пропуску розділів кнопкою Вгору (Налаштування/Загальні/Прив’язки/Наступний розділ кнопкою Вгору)",
-      "Невеликі виправлення відтворення"
-    ]
-  },
   "32.80 (by doroved-patch v2)": {
     "versionCode": 2470002,
     "changelog": [
-      "[doroved-patch v2] Custom SNI + 3s googlevideo TLS timeout",
+      "[doroved-patch v2] Auto-clear app cache after update to prevent 403 / PoToken errors"
+    ],
+    "changelog_ru": [
+      "[doroved-patch v2] Автоочистка кэша приложения после обновления (исправление ошибок 403 / PoToken)"
+    ]
+  },
+  "32.80 (by doroved-patch v1)": {
+    "versionCode": 2470001,
+    "changelog": [
+      "[doroved-patch v1] Custom SNI (www.google.com), 3s googlevideo TLS timeout, TV/WEB clients, OkHttp lock",
       "Fix code generation for casting from phone",
       "Added option to quickly skip chapters to Settings/General/Mapping/Next chapter with UP button",
       "Minor playback fixes"
     ],
     "changelog_ru": [
-      "[doroved-patch v2] Кастомный SNI + таймаут 3 сек на googlevideo",
+      "[doroved-patch v1] Кастомный SNI (www.google.com), таймаут 3 сек на googlevideo, клиенты TV/WEB, фиксация OkHttp",
       "Исправление генерации кода для трансляции с телефона",
       "Добавлена опция быстрого пропуска глав кнопкой Вверх (Настройки/Общие/Привязки/Следующая глава кнопкой Вверх)",
       "Небольшие исправления воспроизведения"
     ],
     "changelog_uk": [
-      "[doroved-patch v2] Custom SNI + 3s googlevideo TLS timeout",
+      "[doroved-patch v1] Custom SNI (www.google.com), 3s googlevideo TLS timeout, TV/WEB clients, OkHttp lock",
       "Виправлення генерації коду для трансляції з телефона",
       "Додано опцію швидкого пропуску розділів кнопкою Вгору (Налаштування/Загальні/Прив’язки/Наступний розділ кнопкою Вгору)",
       "Невеликі виправлення відтворення"
