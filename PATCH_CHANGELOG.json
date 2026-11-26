@@ -1,4 +1,12 @@
 {
+  "3": {
+    "en": [
+      "Fix live streams playback by restoring TV_SAMSUNG (DASH) and IOS (HLS) clients"
+    ],
+    "ru": [
+      "Исправлен запуск прямых эфиров: добавлены клиенты TV_SAMSUNG (DASH) и IOS (HLS)"
+    ]
+  },
   "2": {
     "en": [
       "Auto-clear app cache after update to prevent 403 / PoToken errors"

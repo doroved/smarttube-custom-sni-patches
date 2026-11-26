@@ -20,21 +20,19 @@ index 06c72855..1c4e44dc 100644
          // No command during one minute could be a sign of hanged connection.
          builder.readTimeout(60_000, TimeUnit.MILLISECONDS);
 diff --git a/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service/internal/FormatInfoWrapper.kt b/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service/internal/FormatInfoWrapper.kt
-index d97984c3..d39eb9fe 100644
+index d97984c3..9e58cfc2 100644
 --- a/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service/internal/FormatInfoWrapper.kt
 +++ b/youtubeapi/src/main/java/com/liskovsoft/youtubeapi/service/internal/FormatInfoWrapper.kt
-@@ -22,21 +22,7 @@ internal object FormatInfoWrapper {
-     private val lock = Any()
-     private val CLIENT_LIST = arrayOf(
+@@ -24,19 +24,7 @@ internal object FormatInfoWrapper {
          Pair(AppClient.TV, ProviderType.LEGACY), // Supports auth. Fixes "please sign in" bug! (the best for Premium users)
--        Pair(AppClient.TV_SAMSUNG, ProviderType.LEGACY), // Supports auth. Still contains DASH formats
+         Pair(AppClient.TV_SAMSUNG, ProviderType.LEGACY), // Supports auth. Still contains DASH formats
          Pair(AppClient.WEB, ProviderType.INNERTUBE), // Fix video clip blocked in current location
 -        Pair(AppClient.VISIONOS, ProviderType.LEGACY), // no url formats
 -        Pair(AppClient.TV_DOWNGRADED, ProviderType.LEGACY), // works with old UAs like old Cobalt and old Xbox (non-tcl players)
 -        Pair(AppClient.WEB_EMBED, ProviderType.LEGACY), // Restricted (18+) videos (not working)
 -        //AppClient.ANDROID_REEL, // doesn't require pot and cipher (hangs on all engines)
 -        Pair(AppClient.WEB_SAFARI, ProviderType.LEGACY),
--        Pair(AppClient.IOS, ProviderType.LEGACY),
+         Pair(AppClient.IOS, ProviderType.LEGACY),
 -        Pair(AppClient.GEO, ProviderType.LEGACY), // Fix video clip blocked in current location
 -        Pair(AppClient.MWEB, ProviderType.LEGACY), // single audio language
 -        //AppClient.TV_LEGACY,
